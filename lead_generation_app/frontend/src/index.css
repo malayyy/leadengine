@@ -1,0 +1,73 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+@import "tailwindcss";
+
+@layer utilities {
+  .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+  .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); border-radius: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+  .animate-in { animation: animate-in 0.3s ease-out; }
+  .fade-in { animation: fade-in 0.3s ease-out; }
+  .zoom-in-95 { animation: zoom-in-95 0.3s ease-out; }
+  .slide-in-from-bottom-4 { animation: slide-in-from-bottom-4 0.3s ease-out; }
+  .slide-in-from-right-8 { animation: slide-in-from-right-8 0.3s ease-out; }
+  .slide-in-from-left { animation: slide-in-from-left 0.3s ease-out; }
+  .duration-200 { animation-duration: 0.2s; }
+  .duration-300 { animation-duration: 0.3s; }
+  .duration-500 { animation-duration: 0.5s; }
+
+  @keyframes animate-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes zoom-in-95 { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+  @keyframes slide-in-from-bottom-4 { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes slide-in-from-right-8 { from { opacity: 0; transform: translateX(8px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes slide-in-from-left { from { opacity: 0; transform: translateX(-100%); } to { opacity: 1; transform: translateX(0); } }
+}
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+  --font-serif: "Playfair Display", Georgia, Cambria, "Times New Roman", Times, serif;
+  --color-primary: #111827;
+  --color-accent: #f3f4f6;
+}
+
+body {
+  background-color: #0B0F19;
+  color: #f3f4f6;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: white;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #111827; }
+::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #4B5563; }
+
+.loader {
+  display: inline-grid;
+  width: 80px;
+  aspect-ratio: 1;
+  animation: l11-0 3s linear infinite;
+}
+.loader:before, .loader:after {
+  content: "";
+  grid-area: 1/1;
+}
+.loader:before {
+  clip-path: polygon(100% 50%,83.81% 59.06%,93.3% 75%,74.75% 74.75%,75% 93.3%,59.06% 83.81%,50% 100%,40.94% 83.81%,25% 93.3%,25.25% 74.75%,6.7% 75%,16.19% 59.06%,0% 50%,16.19% 40.94%,6.7% 25%,25.25% 25.25%,25% 6.7%,40.94% 16.19%,50% 0%,59.06% 16.19%,75% 6.7%,74.75% 25.25%,93.3% 25%,83.81% 40.94%);
+  background: #1B325F;
+  transform: rotate(0turn) translate(-12.5%) rotate(0turn);
+  animation: l11-1 2s linear infinite;
+}
+.loader:after {
+  margin: 12.5%;
+  clip-path: polygon(100% 50%,78.19% 60.26%,88.3% 82.14%,65% 75.98%,58.68% 99.24%,44.79% 79.54%,25% 93.3%,27.02% 69.28%,3.02% 67.1%,20% 50%,3.02% 32.9%,27.02% 30.72%,25% 6.7%,44.79% 20.46%,58.68% 0.76%,65% 24.02%,88.3% 17.86%,78.19% 39.74%);
+  background: #9CC4E4;
+}
+@keyframes l11-0 {to{rotate: 1turn;}}
+@keyframes l11-1 {to{transform: rotate(-1turn) translate(-12.5%) rotate(.75turn);}}

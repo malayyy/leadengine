@@ -1,0 +1,40 @@
+use_default_settings: true
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "lead_gen_secret_key_99"
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    engine: google
+    shortcut: go
+    use_mobile_ui: false
+
+  - name: brave
+    engine: brave
+    shortcut: br
+    use_mobile_ui: false
+
+  - name: bing
+    engine: bing
+    shortcut: bi
+    use_mobile_ui: false
+
+outgoing:
+  request_timeout: 15.0
+  max_request_timeout: 30.0
+  pool_connections: 100
+  pool_maxsize: 100
+  # Here is where we can add free HTTP proxies. SearxNG will randomly pick one per request!
+  # Uncomment the block below and add proxy IPs as they become available.
+  # proxies:
+  #   all://:
+  #     - http://free-proxy-1:port
+  #     - http://free-proxy-2:port

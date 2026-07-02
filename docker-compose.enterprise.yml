@@ -1,0 +1,285 @@
+version: '3.8'
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: leadgen_postgres
+    environment:
+      POSTGRES_DB: leadengine
+      POSTGRES_USER: leadengine
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leadengine_secret}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - leadgen_net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leadengine"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: leadgen_redis
+    volumes:
+      - redis_data:/data
+    networks:
+      - leadgen_net
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 2gb --maxmemory-policy allkeys-lru
+
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: leadgen_searxng
+    restart: unless-stopped
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:rw
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_REDIS_URL=redis://redis:6379/0
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    networks:
+      - leadgen_net
+    depends_on:
+      redis:
+        condition: service_started
+    logging: *default-logging
+
+  api:
+    build: .
+    container_name: leadgen_api
+    command: uvicorn lead_generation_app.backend.app:app --host 0.0.0.0 --port 8000 --workers 4
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://leadengine:${POSTGRES_PASSWORD:-leadengine_secret}@postgres:5432/leadengine
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PROXY_LIST=${PROXY_LIST}
+      - MILLION_VERIFIER_API_KEY=${MILLION_VERIFIER_API_KEY}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - LINKEDIN_LI_AT_COOKIE=${LINKEDIN_LI_AT_COOKIE}
+      - PUBLIC_API_DOMAIN=api.chopstickintegrations.com
+      - SEARXNG_URL=http://searxng:8080
+    networks:
+      - leadgen_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.leadgen_api.rule=Host(`api.${DOMAIN:-chopstickintegrations.com}`)"
+      - "traefik.http.routers.leadgen_api.entrypoints=websecure"
+      - "traefik.http.routers.leadgen_api.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.leadgen_api.loadbalancer.server.port=8000"
+
+  celery_worker_scrape:
+    build: .
+    container_name: leadgen_worker_1
+    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=10 -Q scrape
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://leadengine:${POSTGRES_PASSWORD:-leadengine_secret}@postgres:5432/leadengine
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PROXY_LIST=${PROXY_LIST}
+      - MILLION_VERIFIER_API_KEY=${MILLION_VERIFIER_API_KEY}
+      - SEARXNG_URL=http://searxng:8080
+    networks:
+      - leadgen_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
+  celery_worker_enrich:
+    build: .
+    container_name: leadgen_worker_2
+    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=25 -Q enrich
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://leadengine:${POSTGRES_PASSWORD:-leadengine_secret}@postgres:5432/leadengine
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - PROXY_LIST=${PROXY_LIST}
+      - SEARXNG_URL=http://searxng:8080
+    networks:
+      - leadgen_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
+  celery_worker_email:
+    build: .
+    container_name: leadgen_worker_3
+    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=10 --max-tasks-per-child=50 -Q email
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://leadengine:${POSTGRES_PASSWORD:-leadengine_secret}@postgres:5432/leadengine
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MILLION_VERIFIER_API_KEY=${MILLION_VERIFIER_API_KEY}
+      - SEARXNG_URL=http://searxng:8080
+    networks:
+      - leadgen_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
+  celery_beat:
+    build: .
+    container_name: leadgen_beat
+    command: celery -A lead_generation_app.backend.celery_app beat --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://leadengine:${POSTGRES_PASSWORD:-leadengine_secret}@postgres:5432/leadengine
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    networks:
+      - leadgen_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  flower:
+    image: mher/flower:2.0
+    container_name: leadgen_flower
+    command: celery flower --broker=redis://redis:6379/0 --port=5555
+    networks:
+      - leadgen_net
+    depends_on:
+      - redis
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.leadgen_flower.rule=Host(`flower.chopstickintegrations.com`)"
+      - "traefik.http.routers.leadgen_flower.entrypoints=websecure"
+      - "traefik.http.routers.leadgen_flower.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.leadgen_flower.loadbalancer.server.port=5555"
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: leadgen_prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - leadgen_net
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: leadgen_grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - leadgen_net
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.leadgen_grafana.rule=Host(`monitor.chopstickintegrations.com`)"
+      - "traefik.http.routers.leadgen_grafana.entrypoints=websecure"
+      - "traefik.http.routers.leadgen_grafana.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.leadgen_grafana.loadbalancer.server.port=3000"
+
+  frontend:
+    build: ./lead_generation_app/frontend
+    container_name: leadgen_frontend
+    networks:
+      - leadgen_net
+    depends_on:
+      - api
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.leadgen_app.rule=Host(`app.${DOMAIN:-chopstickintegrations.com}`)"
+      - "traefik.http.routers.leadgen_app.entrypoints=websecure"
+      - "traefik.http.routers.leadgen_app.tls.certresolver=mytlschallenge"
+      - "traefik.http.services.leadgen_app.loadbalancer.server.port=80"
+
+  traefik:
+    image: traefik:v3.1
+    container_name: leadgen_traefik
+    command:
+      - "--api.dashboard=true"
+      - "--api.debug=false"
+      - "--log.level=INFO"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.mytlschallenge.acme.tlschallenge=true"
+      - "--certificatesresolvers.mytlschallenge.acme.email=admin@${DOMAIN:-chopstickintegrations.com}"
+      - "--certificatesresolvers.mytlschallenge.acme.storage=/letsencrypt/acme.json"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=leadgen_net"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik_letsencrypt:/letsencrypt"
+    networks:
+      - leadgen_net
+    restart: unless-stopped
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.traefik_dashboard.rule=Host(`traefik.${DOMAIN:-chopstickintegrations.com}`)"
+      - "traefik.http.routers.traefik_dashboard.entrypoints=websecure"
+      - "traefik.http.routers.traefik_dashboard.tls.certresolver=mytlschallenge"
+      - "traefik.http.routers.traefik_dashboard.service=api@internal"
+      - "traefik.http.routers.traefik_dashboard.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=admin:$$2y$$10$$ZFHryYpVBFR8FhNPP3b7ROwJAfDHq5NMPFOeNVMBxMtboKGMVxTWC"
+
+volumes:
+  pgdata:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+  traefik_letsencrypt:
+
+networks:
+  leadgen_net:
+    driver: bridge
