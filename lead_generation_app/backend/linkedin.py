@@ -298,7 +298,7 @@ class LinkedInScraper:
         search_query = quote_plus(f"{query} {location}")
         url = f"https://www.linkedin.com/search/results/people/?keywords={search_query}"
 
-        cookies = [{"name": "li_at", "value": li_at_cookie, "domain": ".linkedin.com"}]
+        cookies = [{"name": "li_at", "value": li_at_cookie, "domain": ".linkedin.com", "path": "/"}]
 
         start = time.monotonic()
         if progress_callback:
@@ -351,7 +351,7 @@ class LinkedInScraper:
         return results
 
     async def _scrape_profile_experience(self, profile_url, li_at_cookie, progress_callback=None):
-        cookies = [{"name": "li_at", "value": li_at_cookie, "domain": ".linkedin.com"}] if li_at_cookie else None
+        cookies = [{"name": "li_at", "value": li_at_cookie, "domain": ".linkedin.com", "path": "/"}] if li_at_cookie else None
 
         if progress_callback:
             progress_callback(f"Scraping LinkedIn profile experience: {profile_url}")
