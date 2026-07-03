@@ -68,7 +68,14 @@ class ConsoleFormatter(logging.Formatter):
 
 
 def _make_log_dir(campaign_name: Optional[str] = None) -> str:
-    base = os.environ.get("LOG_DIR", "logs")
+    env_dir = os.environ.get("LOG_DIR", "")
+    base = (
+        env_dir
+        if env_dir
+        else os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs"
+        )
+    )
     if campaign_name:
         safe = re.sub(r'[^a-zA-Z0-9_-]', '_', campaign_name)
         path = os.path.join(base, safe)
@@ -190,5 +197,3 @@ class PhaseLogger:
         else:
             logger.error(msg, extra={"extra_fields": extra_fields})
 
-
-import asyncio

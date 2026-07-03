@@ -1,5 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 
 import { ToastProvider } from './components/Toast';
 import Login from './components/Login';
@@ -69,14 +70,22 @@ function AppShell({ token, onLogin, onLogout }) {
 function App() {
   const [token, setToken] = useState(localStorage.getItem('adminToken'));
 
+  useEffect(() => {
+    if (token) {
+      axios.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+    }
+  }, [token]);
+
   const handleLogin = useCallback((newToken) => {
     setToken(newToken);
     localStorage.setItem('adminToken', newToken);
+    axios.defaults.headers.common["Authorization"] = `Bearer ${newToken}`;
   }, []);
 
   const handleLogout = useCallback(() => {
     setToken(null);
     localStorage.removeItem('adminToken');
+    delete axios.defaults.headers.common["Authorization"];
   }, []);
 
   if (!token) return <Login onLogin={handleLogin} />;

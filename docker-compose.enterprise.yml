@@ -60,7 +60,7 @@ services:
   api:
     build: .
     container_name: leadgen_api
-    command: uvicorn lead_generation_app.backend.app:app --host 0.0.0.0 --port 8000 --workers 4
+    command: sh -c "alembic upgrade head && uvicorn lead_generation_app.backend.app:app --host 0.0.0.0 --port 8000 --workers 4"
     volumes:
       - .:/app
     environment:
@@ -92,7 +92,7 @@ services:
   celery_worker_scrape:
     build: .
     container_name: leadgen_worker_1
-    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=10 -Q scrape
+    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=5 -Q scrape
     volumes:
       - .:/app
     environment:
@@ -115,7 +115,7 @@ services:
   celery_worker_enrich:
     build: .
     container_name: leadgen_worker_2
-    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=8 --max-tasks-per-child=25 -Q enrich
+    command: celery -A lead_generation_app.backend.celery_app worker --loglevel=info --concurrency=2 --max-tasks-per-child=5 -Q enrich
     volumes:
       - .:/app
     environment:

@@ -4,7 +4,7 @@ import asyncio
 from typing import Optional
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 MILLION_VERIFIER_API_KEY = os.environ.get("MILLION_VERIFIER_API_KEY")
 
 async def verify_email_millionverifier(email: str) -> Optional[str]:

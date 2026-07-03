@@ -13,7 +13,7 @@ export default function Login({ onLogin }) {
     setLoading(true);
     try {
       const res = await axios.post(`${API_BASE}/auth/login`, { password });
-      onLogin(res.data.token);
+      onLogin(res.data.access_token);
     } catch {
       setError('Invalid credentials');
     }

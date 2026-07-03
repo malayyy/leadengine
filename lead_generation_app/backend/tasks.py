@@ -469,16 +469,16 @@ async def _process_title(state, title):
     pl.log_enrich("Title=%s | found %d results in %.2fs", title, len(results), search_elapsed,
                   extra_fields={"title": title, "results_count": len(results), "search_duration_ms": round(search_elapsed * 1000, 2)})
 
-    def process_result(res, acc):
+    async def process_result(res, acc):
         profile_url = res.get("url", "")
         if not profile_url or profile_url in acc["seen_urls"]:
             return acc
-        return _process_linkedin_result(res, profile_url, title, acc)
+        return await _process_linkedin_result(res, profile_url, title, acc)
 
-    return reduce(lambda acc, res: process_result(res, acc), results, state)
+    return await _areduce(process_result, results, state)
 
 
-def _process_linkedin_result(res, profile_url, title, state):
+async def _process_linkedin_result(res, profile_url, title, state):
     db = SessionLocal()
     pl = PhaseLogger(state.get("campaign_name", "Unknown"), state["job_id"])
     try:
@@ -487,9 +487,9 @@ def _process_linkedin_result(res, profile_url, title, state):
 
         if state["linkedin_cookie"] and profile_url:
             exp_start = time.monotonic()
-            exp_data = asyncio.run(state["scraper"]._scrape_profile_experience(
+            exp_data = await state["scraper"]._scrape_profile_experience(
                 profile_url, state["linkedin_cookie"], state["progress_callback"],
-            ))
+            )
             exp_elapsed = time.monotonic() - exp_start
             if exp_data:
                 current_company = exp_data.get("company", "").lower()

@@ -22,7 +22,7 @@ from collections import defaultdict
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
-from .database import engine, Base, get_db
+from .database import engine, get_db
 from .models import Campaign, Job, RawCompanyRecord, EnrichedLead
 from .tasks import phase_1_gmaps_scrape
 from .millionverifier import get_remaining_credits
@@ -32,11 +32,10 @@ from .proxy_rotator import ProxyRotator
 from .rate_limiter import DomainRateLimiter
 from .metrics import metrics_endpoint, jobs_total, records_total, leads_total, emails_verified, active_jobs, scrape_rate, mv_credits_gauge
 from .logger import get_logger, mask_sensitive
+from .auth import create_access_token, verify_token, get_current_user
 
 log = get_logger("api")
 request_log = get_logger("http")
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Lead Generation Pipeline API", version="4.0.0")
 rate_limiter = DomainRateLimiter()
@@ -111,6 +110,15 @@ async def handle_messages(request: Request):
 # WebSocket endpoint for real-time job events
 @app.websocket("/api/v1/ws/jobs/{job_id}")
 async def websocket_job_events(websocket: WebSocket, job_id: int):
+    token = websocket.query_params.get("token", "")
+    if not token:
+        await websocket.close(code=4001, reason="Missing token")
+        return
+    try:
+        verify_token(token)
+    except HTTPException:
+        await websocket.close(code=4001, reason="Invalid or expired token")
+        return
     await ws_manager.connect(job_id, websocket)
     try:
         while True:
@@ -142,7 +150,7 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/api/v1/jobs/pipeline")
-def start_lead_pipeline(req: PipelineRequest, db: Session = Depends(get_db)):
+def start_lead_pipeline(req: PipelineRequest, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     campaign = db.query(Campaign).filter(Campaign.name == req.campaign_name).first()
     if not campaign:
         campaign = Campaign(
@@ -198,7 +206,7 @@ def start_lead_pipeline(req: PipelineRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/jobs/batch")
-def batch_lead_pipelines(req: BatchPipelineRequest, db: Session = Depends(get_db)):
+def batch_lead_pipelines(req: BatchPipelineRequest, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     results = []
     for j in req.jobs:
         campaign = db.query(Campaign).filter(Campaign.name == j.campaign_name).first()
@@ -269,7 +277,7 @@ async def _sse_poll(pubsub, request, channel, r, depth=5000):
 
 
 @app.get("/api/v1/jobs/{job_id}/stream")
-async def stream_job_events(job_id: int, request: Request):
+async def stream_job_events(job_id: int, request: Request, _: dict = Depends(get_current_user)):
     async def event_generator():
         redis_url = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
         r = aioredis.from_url(redis_url)
@@ -283,7 +291,7 @@ async def stream_job_events(job_id: int, request: Request):
 
 
 @app.get("/api/v1/jobs/{job_id}")
-def get_job_status(job_id: int, db: Session = Depends(get_db)):
+def get_job_status(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -295,7 +303,7 @@ def get_job_status(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/jobs/{job_id}/records")
-def get_job_records(job_id: int, db: Session = Depends(get_db)):
+def get_job_records(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -322,12 +330,13 @@ def get_job_records(job_id: int, db: Session = Depends(get_db)):
 def login(req: LoginRequest):
     admin_password = os.environ.get("ADMIN_PASSWORD", "leadengine123")
     if req.password == admin_password:
-        return {"token": "admin-token-valid-1234"}
+        token = create_access_token({"sub": "admin"})
+        return {"access_token": token, "token_type": "bearer"}
     raise HTTPException(status_code=401, detail="Invalid password")
 
 
 @app.get("/api/v1/dashboard/metrics")
-def get_metrics(db: Session = Depends(get_db)):
+def get_metrics(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     total_jobs = db.query(Job).count()
     total_records = db.query(RawCompanyRecord).count()
     total_enriched = db.query(EnrichedLead).count()
@@ -338,7 +347,7 @@ def get_metrics(db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/dashboard/realtime-metrics")
-def get_realtime_metrics(db: Session = Depends(get_db)):
+def get_realtime_metrics(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     zips = db.query(RawCompanyRecord.zip_code, func.count(RawCompanyRecord.id)).group_by(RawCompanyRecord.zip_code).order_by(func.count(RawCompanyRecord.id).desc()).limit(10).all()
     zip_data = list(map(lambda z: {"zipcode": z[0] or "Unknown", "count": z[1]}, zips))
     campaign_records = db.query(Campaign.name, RawCompanyRecord.industry, func.count(RawCompanyRecord.id)).join(Job, Job.campaign_id == Campaign.id).join(RawCompanyRecord, RawCompanyRecord.job_id == Job.id).group_by(Campaign.name, RawCompanyRecord.industry).all()
@@ -353,14 +362,14 @@ def get_realtime_metrics(db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/dashboard/credits")
-async def get_mv_credits():
+async def get_mv_credits(_: dict = Depends(get_current_user)):
     credits = await get_remaining_credits()
     mv_credits_gauge.set(credits or 0)
     return {"credits": credits}
 
 
 @app.get("/api/v1/locations/zipcodes")
-def get_zipcodes_by_state(state: str, limit: int = 500):
+def get_zipcodes_by_state(state: str, limit: int = 500, _: dict = Depends(get_current_user)):
     from uszipcode import SearchEngine
     search = SearchEngine()
     res = search.by_state(state.upper(), returns=limit)
@@ -369,12 +378,12 @@ def get_zipcodes_by_state(state: str, limit: int = 500):
 
 
 @app.get("/api/v1/campaigns")
-def get_campaigns(db: Session = Depends(get_db)):
+def get_campaigns(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     return db.query(Campaign).order_by(Campaign.id.desc()).all()
 
 
 @app.get("/api/v1/jobs")
-def get_jobs(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
+def get_jobs(skip: int = 0, limit: int = 50, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     jobs = db.query(Job).order_by(Job.id.desc()).offset(skip).limit(limit).all()
 
     def serialize_job(j):
@@ -390,7 +399,7 @@ def get_jobs(skip: int = 0, limit: int = 50, db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/jobs/{job_id}/pause")
-def pause_job(job_id: int, db: Session = Depends(get_db)):
+def pause_job(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if job and job.status == 'in_progress':
         job.status = 'paused'
@@ -399,7 +408,7 @@ def pause_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/jobs/{job_id}/resume")
-def resume_job(job_id: int, db: Session = Depends(get_db)):
+def resume_job(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if job and job.status == 'paused':
         job.status = 'in_progress'
@@ -408,7 +417,7 @@ def resume_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/v1/jobs/{job_id}/cancel")
-def cancel_job(job_id: int, db: Session = Depends(get_db)):
+def cancel_job(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if job and job.status in ['in_progress', 'paused', 'pending']:
         job.status = 'cancelled'
@@ -418,7 +427,7 @@ def cancel_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/jobs/{job_id}/export")
-def export_job_leads_csv(job_id: int, db: Session = Depends(get_db)):
+def export_job_leads_csv(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -432,7 +441,7 @@ def export_job_leads_csv(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/jobs/{job_id}/details")
-def get_job_details(job_id: int, db: Session = Depends(get_db)):
+def get_job_details(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -444,13 +453,13 @@ def get_job_details(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/leads")
-def get_all_leads(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_all_leads(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     leads = db.query(EnrichedLead, RawCompanyRecord).join(RawCompanyRecord, EnrichedLead.raw_record_id == RawCompanyRecord.id).order_by(EnrichedLead.id.desc()).offset(skip).limit(limit).all()
     return list(map(lambda lr: {"id": lr[0].id, "first_name": lr[0].first_name, "last_name": lr[0].last_name, "title": lr[0].title, "email": lr[0].guessed_email, "email_status": lr[0].email_verification_status, "linkedin_url": lr[0].linkedin_url, "company_name": lr[1].company_name, "industry": lr[1].industry, "city": lr[1].city, "state": lr[1].state, "job_id": lr[1].job_id}, leads))
 
 
 @app.get("/api/v1/leads/export")
-def export_leads_csv(db: Session = Depends(get_db)):
+def export_leads_csv(db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     leads = db.query(EnrichedLead, RawCompanyRecord).join(RawCompanyRecord, EnrichedLead.raw_record_id == RawCompanyRecord.id).all()
     output = io.StringIO()
     writer = csv.writer(output)
@@ -461,18 +470,18 @@ def export_leads_csv(db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/jobs/{job_id}/companies")
-def get_job_companies(job_id: int, db: Session = Depends(get_db)):
+def get_job_companies(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     return db.query(RawCompanyRecord).filter(RawCompanyRecord.job_id == job_id).all()
 
 
 @app.get("/api/v1/jobs/{job_id}/leads")
-def get_job_specific_leads(job_id: int, db: Session = Depends(get_db)):
+def get_job_specific_leads(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     leads = db.query(EnrichedLead, RawCompanyRecord).join(RawCompanyRecord, EnrichedLead.raw_record_id == RawCompanyRecord.id).filter(RawCompanyRecord.job_id == job_id).all()
     return list(map(lambda lr: {"id": lr[0].id, "first_name": lr[0].first_name, "last_name": lr[0].last_name, "title": lr[0].title, "email": lr[0].guessed_email, "email_status": lr[0].email_verification_status, "linkedin_url": lr[0].linkedin_url, "company_name": lr[1].company_name}, leads))
 
 
 @app.delete("/api/v1/jobs/{job_id}")
-def delete_job(job_id: int, db: Session = Depends(get_db)):
+def delete_job(job_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     job = db.query(Job).filter(Job.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -485,12 +494,12 @@ def delete_job(job_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/companies")
-def get_all_companies(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+def get_all_companies(skip: int = 0, limit: int = 100, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     return db.query(RawCompanyRecord).order_by(RawCompanyRecord.id.desc()).offset(skip).limit(limit).all()
 
 
 @app.get("/api/v1/companies/{company_id}")
-def get_company(company_id: int, db: Session = Depends(get_db)):
+def get_company(company_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     company = db.query(RawCompanyRecord).filter(RawCompanyRecord.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -498,12 +507,12 @@ def get_company(company_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/companies/{company_id}/leads")
-def get_company_leads(company_id: int, db: Session = Depends(get_db)):
+def get_company_leads(company_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     return db.query(EnrichedLead).filter(EnrichedLead.raw_record_id == company_id).all()
 
 
 @app.get("/api/v1/leads/{lead_id}/organization")
-def get_lead_organization(lead_id: int, db: Session = Depends(get_db)):
+def get_lead_organization(lead_id: int, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     lead = db.query(EnrichedLead).filter(EnrichedLead.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -511,7 +520,7 @@ def get_lead_organization(lead_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/v1/leads/search")
-def search_leads(title: Optional[str] = None, industry: Optional[str] = None, db: Session = Depends(get_db)):
+def search_leads(title: Optional[str] = None, industry: Optional[str] = None, db: Session = Depends(get_db), _: dict = Depends(get_current_user)):
     query = db.query(EnrichedLead, RawCompanyRecord).join(RawCompanyRecord, EnrichedLead.raw_record_id == RawCompanyRecord.id)
     if title:
         query = query.filter(EnrichedLead.title.ilike(f"%{title}%"))
@@ -522,7 +531,7 @@ def search_leads(title: Optional[str] = None, industry: Optional[str] = None, db
 
 
 @app.get("/api/v1/system/info")
-def system_info():
+def system_info(_: dict = Depends(get_current_user)):
     return {
         "version": "4.0.0",
         "database": os.environ.get("DATABASE_URL", "sqlite").split("://")[0],
