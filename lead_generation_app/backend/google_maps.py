@@ -7,33 +7,15 @@ from urllib.parse import quote_plus
 from scrapling.parser import Selector
 
 from .logger import get_logger
+from .base_scraper import safe_json, deep_get, merge_dicts, split_name, try_regex, EMAIL_RE, NAME_RE, TITLE_RE
 
 google_log = get_logger("google_maps")
-
-
-def _safe_json(text):
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        return None
-
-
-def _deep_get(d, *keys):
-    return reduce(lambda acc, k: acc.get(k, {}) if isinstance(acc, dict) else None, keys, d) or ''
-
-
-def _merge_dicts(a, b):
-    if a is None:
-        return b
-    if b is None:
-        return a
-    return {**a, **dict(filter(lambda kv: kv[1], b.items()))}
 
 
 def _try_ldjson(page):
     scripts = page.css('script[type="application/ld+json"]')
     parsed = list(filter(None, map(
-        lambda s: _safe_json(s.css('::text').get() or '{}'),
+        lambda s: safe_json(s.css('::text').get() or '{}'),
         scripts
     )))
     if not parsed:
@@ -50,10 +32,10 @@ def _try_ldjson(page):
     if not candidates:
         candidates = items
     best = candidates[0] if candidates else parsed[0] if parsed else {}
-    name = _deep_get(best, 'name')
-    title = _deep_get(best, 'jobTitle') or _deep_get(best, 'description') or ''
-    email = _deep_get(best, 'email')
-    first, last = _split_name(name)
+    name = deep_get(best, 'name')
+    title = deep_get(best, 'jobTitle') or deep_get(best, 'description') or ''
+    email = deep_get(best, 'email')
+    first, last = split_name(name)
     if name:
         return {"first_name": first, "last_name": last, "email": email, "title": title}
     return None
@@ -92,7 +74,7 @@ def _extract_from_js_blob(text):
     )
     if not result.get('name') and not result.get('email'):
         return None
-    first, last = _split_name(result['name'])
+    first, last = split_name(result['name'])
     return {
         "first_name": first,
         "last_name": last,
@@ -133,32 +115,8 @@ def _try_css(page):
     if not raw.get('name'):
         return None
     raw['email'] = raw.get('email', '').replace('mailto:', '').strip() if raw.get('email') else ''
-    first, last = _split_name(raw['name'])
+    first, last = split_name(raw['name'])
     return {"first_name": first, "last_name": last, "email": raw['email'], "title": raw.get('title', '')}
-
-
-EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
-NAME_RE = re.compile(r'([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)\s([A-Z][a-z]+(?:[-][A-Z][a-z]+)?)')
-TITLE_RE = re.compile(r'(?:CEO|CFO|CTO|COO|Founder|Owner|President|Director|Manager|Engineer|Developer|Consultant|Specialist|Lead|Head|VP|Vice President|Executive)\s*(?:of|at|-)?\s*[A-Za-z\s&]{2,60}', re.IGNORECASE)
-
-
-def _try_regex(page):
-    html = page.css('::text').getall()
-    text = ' '.join(html) if html else (str(page) if page else '')
-    emails = EMAIL_RE.findall(text)
-    names = NAME_RE.findall(text)
-    titles = TITLE_RE.findall(text)
-    email = emails[0] if emails else ''
-    first, last = names[0] if names else ('', '')
-    title = titles[0] if titles else ''
-    first = first.strip() if names else ''
-    last = last.strip() if names else ''
-    return {"first_name": first, "last_name": last, "email": email, "title": title.strip()}
-
-
-def _split_name(name):
-    parts = name.strip().split(None, 1)
-    return (parts[0], parts[1]) if len(parts) > 1 else (parts[0] if parts else '', '')
 
 
 def extract(nodes):
@@ -166,7 +124,7 @@ def extract(nodes):
         _try_ldjson(node)
         or _try_data_layer(node)
         or _try_css(node)
-        or _try_regex(node)
+        or try_regex(node)
     ), nodes)))
 
 

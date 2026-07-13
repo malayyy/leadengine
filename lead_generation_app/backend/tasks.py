@@ -328,9 +328,9 @@ def phase_1_gmaps_scrape(self, job_id, industry, zipcodes, state, target_titles,
         raise
 
 
-async def async_phase_2_enrich(job_id, raw_record_id, target_titles, proxy, linkedin_cookie):
+async def async_phase_2_enrich(job_id, raw_record_id, target_titles, proxy, linkedin_cookie, scraper=None):
     db = SessionLocal()
-    scraper = LinkedInScraper(proxy=proxy_rotator.get_next() if not proxy else proxy)
+    actual_scraper = scraper or LinkedInScraper(proxy=proxy_rotator.get_next() if not proxy else proxy)
 
     def progress_callback(log_msg):
         publish_event(job_id, "enrichment_log", {"message": log_msg})
@@ -354,7 +354,7 @@ async def async_phase_2_enrich(job_id, raw_record_id, target_titles, proxy, link
 
         skip_email = job.skip_email_verify if job else 0
         initial_state = {
-            "scraper": scraper, "job_id": job_id, "raw_record_id": raw_record_id,
+            "scraper": actual_scraper, "job_id": job_id, "raw_record_id": raw_record_id,
             "clean_company": clean_company, "state": record.state,
             "linkedin_cookie": linkedin_cookie, "leads_found": 0,
             "seen_urls": set(), "progress_callback": progress_callback,
@@ -404,6 +404,9 @@ def phase_2_enrichment(self, job_id, raw_record_id, target_titles, proxy, linked
         raise
 
 
+BATCH_CONCURRENCY = 5
+
+
 @celery_app.task(name="phase_2_enrichment_batch", bind=True)
 def phase_2_enrichment_batch(self, job_id, raw_record_ids, target_titles, proxy, linkedin_cookie):
     db = SessionLocal()
@@ -416,26 +419,57 @@ def phase_2_enrichment_batch(self, job_id, raw_record_ids, target_titles, proxy,
 
     batch_start = time.monotonic()
     log.info("Phase 2 batch | job_id=%d records=%d batch_size=%d", job_id, len(raw_record_ids), len(raw_record_ids))
-    succeeded = 0
-    failed = 0
-    for rid in raw_record_ids:
-        try:
-            asyncio.run(async_phase_2_enrich(
-                job_id=job_id, raw_record_id=rid,
-                target_titles=target_titles, proxy=proxy,
-                linkedin_cookie=linkedin_cookie,
-            ))
-            succeeded += 1
-        except Exception as e:
-            failed += 1
-            log.error("Phase 2 enrichment failed | job_id=%d record=%d error=%s", job_id, rid, str(e), exc_info=True)
-            publish_event(job_id, "error", {"message": f"Phase 2 Enrichment failed for record {rid}: {e}"})
+
+    result = asyncio.run(_async_process_batch(
+        job_id=job_id, raw_record_ids=raw_record_ids,
+        target_titles=target_titles, proxy=proxy,
+        linkedin_cookie=linkedin_cookie,
+    ))
 
     elapsed = time.monotonic() - batch_start
     log.info("Phase 2 batch completed | job_id=%d succeeded=%d failed=%d took=%.2fs",
-             job_id, succeeded, failed, elapsed)
-    return {"status": "completed", "records_processed": len(raw_record_ids),
-            "succeeded": succeeded, "failed": failed, "job_id": job_id}
+             job_id, result["succeeded"], result["failed"], elapsed)
+    return result
+
+
+async def _async_process_batch(job_id, raw_record_ids, target_titles, proxy, linkedin_cookie):
+    assigned_proxy = proxy_rotator.get_next() if not proxy else proxy
+    scraper = LinkedInScraper(proxy=assigned_proxy)
+
+    if linkedin_cookie:
+        await scraper.start_session(linkedin_cookie)
+
+    sem = asyncio.Semaphore(BATCH_CONCURRENCY)
+
+    try:
+        async def process_one(rid):
+            async with sem:
+                try:
+                    await async_phase_2_enrich(
+                        job_id=job_id, raw_record_id=rid,
+                        target_titles=target_titles, proxy=assigned_proxy,
+                        linkedin_cookie=linkedin_cookie, scraper=scraper,
+                    )
+                    return {"rid": rid, "status": "ok"}
+                except Exception as e:
+                    log.error("Phase 2 enrichment failed | job_id=%d record=%d error=%s", job_id, rid, str(e), exc_info=True)
+                    publish_event(job_id, "error", {"message": f"Phase 2 Enrichment failed for record {rid}: {e}"})
+                    return {"rid": rid, "status": "failed"}
+
+        tasks = list(map(lambda rid: process_one(rid), raw_record_ids))
+        results = await asyncio.gather(*tasks)
+
+        succeeded = len(list(filter(lambda r: r["status"] == "ok", results)))
+        failed = len(list(filter(lambda r: r["status"] == "failed", results)))
+
+        return {
+            "status": "completed", "records_processed": len(raw_record_ids),
+            "succeeded": succeeded, "failed": failed, "job_id": job_id,
+        }
+    finally:
+        if linkedin_cookie and scraper:
+            await scraper.close_session()
+
 
 async def _process_title(state, title):
     job = _check_job_state(state["job_id"])

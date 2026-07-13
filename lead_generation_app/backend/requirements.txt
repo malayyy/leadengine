@@ -5,6 +5,7 @@ celery[sqs]>=5.4.0
 redis>=5.2.0
 scrapling[all]>=0.4.9
 playwright>=1.51.0
+playwright-stealth>=1.0.6
 patchright>=1.51.0
 tldextract>=5.1.0
 uszipcode>=1.0.0
