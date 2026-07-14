@@ -1,0 +1,124 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "default_agent": "senior-dev",
+
+  // Load AGENTS.md as system instructions for every agent
+  "instructions": ["AGENTS.md"],
+
+  // ── Agent definitions ─────────────────────────────────────────────
+  "agent": {
+    // ── Senior Lead Developer (primary) ──
+    "senior-dev": {
+      "description": "Senior Lead Developer — orchestrates the full Lead Engine pipeline. Delegates work to subagents (backend-dev, frontend-dev, scraper-specialist, devops, data-analyst) and reviews their output.",
+      "mode": "primary",
+      "permission": {
+        "edit": "allow",
+        "bash": { "git *": "allow", "rm *": "deny", "docker *": "allow", "ssh *": "allow", "*": "ask" },
+        "read": "allow",
+        "task": "allow",
+        "todowrite": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "question": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
+      }
+    },
+
+    // ── Backend Developer ──
+    "backend-dev": {
+      "description": "Backend Python specialist — FastAPI, SQLAlchemy, Celery tasks, Alembic migrations, database models, routers, schemas, async patterns.",
+      "mode": "subagent",
+      "permission": {
+        "edit": "allow",
+        "bash": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    },
+
+    // ── Frontend Developer ──
+    "frontend-dev": {
+      "description": "Frontend React specialist — React, Vite, Tailwind CSS, Recharts, Three.js, axios, WebSocket SSE streams, dashboard UI, dark mode styling.",
+      "mode": "subagent",
+      "permission": {
+        "edit": "allow",
+        "bash": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    },
+
+    // ── Scraping Specialist ──
+    "scraper-specialist": {
+      "description": "Web scraping specialist — Playwright, Scrapling, Google Maps scrape, LinkedIn cookie auth, X-Ray search, anti-detection, stealth, proxy rotation, Playwright automation, infinite scroll extraction.",
+      "mode": "subagent",
+      "permission": {
+        "edit": "allow",
+        "bash": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    },
+
+    // ── DevOps ──
+    "devops": {
+      "description": "DevOps infrastructure specialist — Docker, docker-compose, AWS EC2, Lambda, API Gateway, Traefik reverse proxy, Let's Encrypt TLS, Prometheus, Grafana, Flower monitoring, deployment automation.",
+      "mode": "subagent",
+      "permission": {
+        "edit": "allow",
+        "bash": "allow",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": "allow",
+        "question": "allow",
+        "webfetch": "allow"
+      }
+    },
+
+    // ── Data Analyst ──
+    "data-analyst": {
+      "description": "Data analyst — CSV export, data processing, pandas, spreadsheet analysis, campaign ICP data, lead quality metrics, A/B test analysis, reporting.",
+      "mode": "subagent",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny",
+        "read": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    }
+  },
+
+  // ── Skills ────────────────────────────────────────────────────────
+  "skills": {
+    "paths": [".opencode/skills"]
+  },
+
+  // ── Permissions (global fallback) ─────────────────────────────────
+  "permission": {
+    "edit": "ask",
+    "bash": { "git *": "allow", "docker *": "ask", "ssh *": "ask", "npm *": "allow", "*": "ask" },
+    "read": "allow",
+    "task": "allow",
+    "todowrite": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "question": "allow",
+    "webfetch": "allow",
+    "websearch": "allow"
+  }
+}
